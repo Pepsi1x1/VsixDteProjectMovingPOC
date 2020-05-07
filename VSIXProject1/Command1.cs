@@ -1,14 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.ComponentModel.Design;
-using System.Globalization;
-using System.Linq;
-using System.Threading;
-using System.Threading.Tasks;
 using EnvDTE;
+using Microsoft;
 using Microsoft.VisualStudio.Shell;
-using Microsoft.VisualStudio.Shell.Interop;
-using Task = System.Threading.Tasks.Task;
 
 namespace VSIXProject1
 {
@@ -20,7 +15,7 @@ namespace VSIXProject1
 		/// <summary>
 		/// Command ID.
 		/// </summary>
-		public const int CommandId = 0x0100;
+		public const int COMMAND_ID = 0x0100;
 
 		/// <summary>
 		/// Command menu group (command set GUID).
@@ -30,7 +25,7 @@ namespace VSIXProject1
 		/// <summary>
 		/// VS Package that provides this command, not null.
 		/// </summary>
-		private readonly AsyncPackage package;
+		private readonly AsyncPackage _package;
 
 		/// <summary>
 		/// Initializes a new instance of the <see cref="Command1"/> class.
@@ -40,11 +35,14 @@ namespace VSIXProject1
 		/// <param name="commandService">Command service to add command to, not null.</param>
 		private Command1(AsyncPackage package, OleMenuCommandService commandService)
 		{
-			this.package = package ?? throw new ArgumentNullException(nameof(package));
+			this._package = package ?? throw new ArgumentNullException(nameof(package));
+
 			commandService = commandService ?? throw new ArgumentNullException(nameof(commandService));
 
-			var menuCommandId = new CommandID(CommandSet, CommandId);
-			var menuItem = new MenuCommand(this.Execute, menuCommandId);
+			CommandID menuCommandId = new CommandID(CommandSet, COMMAND_ID);
+
+			MenuCommand menuItem = new MenuCommand(this.Execute, menuCommandId);
+
 			commandService.AddCommand(menuItem);
 		}
 
@@ -62,19 +60,13 @@ namespace VSIXProject1
 		/// <summary>
 		/// Gets the service provider from the owner package.
 		/// </summary>
-		private Microsoft.VisualStudio.Shell.IAsyncServiceProvider ServiceProvider
-		{
-			get
-			{
-				return this.package;
-			}
-		}
+		private Microsoft.VisualStudio.Shell.IAsyncServiceProvider ServiceProvider => this._package;
 
 		/// <summary>
 		/// Initializes the singleton instance of the command.
 		/// </summary>
 		/// <param name="package">Owner package, not null.</param>
-		public static async Task InitializeAsync(AsyncPackage package)
+		public static async System.Threading.Tasks.Task InitializeAsync(AsyncPackage package)
 		{
 			// Switch to the main thread - the call to AddCommand in Command1's constructor requires
 			// the UI thread.
@@ -84,8 +76,9 @@ namespace VSIXProject1
 
 			_dte = (EnvDTE.DTE)await package.GetServiceAsync(typeof(EnvDTE.DTE));
 
-			Instance = new Command1(package, commandService);
+			Assumes.Present( _dte);
 
+			Instance = new Command1(package, commandService);
 		}
 
 		/// <summary>
@@ -98,9 +91,6 @@ namespace VSIXProject1
 		private void Execute(object sender, EventArgs e)
 		{
 			ThreadHelper.ThrowIfNotOnUIThread();
-			string message = string.Format(CultureInfo.CurrentCulture, "Inside {0}.MenuItemCallback()", this.GetType().FullName);
-			string title = "Command1";
-
 			
 			var projects = GetEnvDteProjects(_dte);
 
@@ -108,18 +98,20 @@ namespace VSIXProject1
 			foreach (Project project in projects)
 			{
 				string projectName = "ClassLibrary1";
-				string SolutionFolderName = "Libs";
+
+				string solutionFolderName = "Libs";
 
 				if (project.Name == projectName)
 				{
-					this.SafeMoveProjectToSolutionFolder(projects, project, projectName, SolutionFolderName);
+					this.SafeMoveProjectToSolutionFolder(projects, project, projectName, solutionFolderName);
 				}
 			}
 		}
 
-		private void SafeMoveProjectToSolutionFolder(List<Project> projects, Project project, string projectName, string SolutionFolderName)
+		private void SafeMoveProjectToSolutionFolder(List<Project> projects, Project project, string projectName, string solutionFolderName)
 		{
 			var projectsToAddRefBackTo = new System.Collections.Generic.List<Project>();
+
 			foreach (Project project2 in projects)
 			{
 				if (this.HasReferenceTo(project2, projectName))
@@ -128,11 +120,15 @@ namespace VSIXProject1
 				}
 			}
 
-			Project movedProject = this.AddProjectToSolutionFolder(project, SolutionFolderName);
+			Project movedProject = this.AddProjectToSolutionFolder(project, solutionFolderName);
 
-			foreach (Project project1 in projectsToAddRefBackTo)
+			if (movedProject != null)
 			{
-				this.AddProjectReference(project1, movedProject);
+
+				foreach (Project project1 in projectsToAddRefBackTo)
+				{
+					this.AddProjectReference(project1, movedProject);
+				}
 			}
 		}
 
@@ -146,9 +142,9 @@ namespace VSIXProject1
 				{
 					reference = vsProject.References.Find(projectToReference.Name);
 				}
-				catch (Exception ex)
+				catch (Exception)
 				{
-					//reference doesnt exist, good to go
+					//reference doesn't exist, good to go
 				}
 
 				if (reference != null)
@@ -166,7 +162,12 @@ namespace VSIXProject1
 			ThreadHelper.ThrowIfNotOnUIThread();
 			try
 			{
-				EnvDTE80.Solution2 solution = (EnvDTE80.Solution2)((EnvDTE80.DTE2)_dte).Solution;
+				EnvDTE80.Solution2 solution = (EnvDTE80.Solution2)_dte.Solution;
+
+				if (solution == null)
+				{
+					return null;
+				}
 
 				string projFullname = project1.FullName;
 
@@ -175,12 +176,15 @@ namespace VSIXProject1
 				if (project != null)
 				{
 					EnvDTE80.SolutionFolder folder = (EnvDTE80.SolutionFolder)project.Object;
+
 					solution.Remove(project1);
+
 					project1 = folder.AddFromFile(projFullname);
 				}
 			}
-			catch (Exception e)
+			catch (Exception)
 			{
+				return null;
 			}
 			return project1;
 		}
@@ -190,14 +194,19 @@ namespace VSIXProject1
 			ThreadHelper.ThrowIfNotOnUIThread();
 
 			Projects projects = solution.Projects;
-			Project folder = projects.Cast<Project>().FirstOrDefault(p => string.Equals(p.Name, folderName));
-
-			if (folder == null)
+			Project folder = null;
+			foreach (Project project in projects)
 			{
-				folder = solution.AddSolutionFolder(folderName);
+				if (!string.Equals(project.Name, folderName))
+				{
+					continue;
+				}
+
+				folder = project;
+				break;
 			}
 
-			return folder;
+			return folder ?? solution.AddSolutionFolder(folderName);
 		}
 
 		private System.Collections.Generic.Dictionary<string, string> GetProjectReferences(Project project)
@@ -205,12 +214,15 @@ namespace VSIXProject1
 			ThreadHelper.ThrowIfNotOnUIThread();
 
 			var refs = new System.Collections.Generic.Dictionary<string, string>();
+
 			if (project.Object is VSLangProj.VSProject vsProject)
 			{
 				foreach (VSLangProj.Reference reference in vsProject.References)
 				{
 					var identity = reference.Identity;
+
 					string path = "";
+
 					if (reference.StrongName)
 					{
 						path = $"{reference.Identity} , Version={reference.Version}, Culture={(ParseReferenceCulture(reference))}, PublicKeyToken={reference.PublicKeyToken}";
@@ -236,13 +248,14 @@ namespace VSIXProject1
 		{
 			ThreadHelper.ThrowIfNotOnUIThread();
 
-			var refs = new System.Collections.Generic.Dictionary<string, string>();
 			if (project.Object is VSLangProj.VSProject vsProject)
 			{
 				foreach (VSLangProj.Reference reference in vsProject.References)
 				{
 					var identity = reference.Identity;
+
 					var name = reference.Name;
+
 					if (identity == projectName || name == projectName)
 					{
 						return true;
